@@ -1,0 +1,99 @@
+---
+title: "COVID-19 patients' blood samples analysis"
+author: "Aleksandra Mizera"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: 
+  html_document: 
+    toc: yes
+    toc_float: yes
+    df_print: kable
+    theme: lumen
+    highlight: tango
+---
+
+# Executive summary
+<!-- TODO  -->
+
+# Environment preparation
+Setting global options and initialization of the seed variable, which is necessary for ensuring reproducibility.
+```{r setup}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(message = FALSE)
+
+set.seed(23)
+```
+
+Loading the libraries used in the project.
+```{r libs}
+library(knitr)
+library(xlsx)
+library(lubridate)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+```
+
+Loading dataset into dataframe without any pre clean-up with caching option checked.
+```{r load_data, cache=TRUE}
+path <- '../res/wuhan_blood_sample_data_Jan_Feb_2020.xlsx'
+df_raw <- read.xlsx(path, sheetIndex=1, header=TRUE)
+```
+
+Cleaning data consisted of the following steps:
+
+1. Normalization of column names
+    + standardizing separator symbol to '.'
+    + converting to lower case
+    + removing preceding and trailing redundant separator symbol occurrences
+    + shortening too long variable names
+2. Conversion of selected columns' data types
+    + setting column 'gender' as factor with 2 levels {1: male, 2: female}
+    + setting column 'outcome' as factor with 2 levels {0: survived, 1: deceased}
+3. Elimination of redundant columns
+    + removing column 're.date' containing the date of the blood test
+    + transforming 2 columns with admission and discharge dates of the patient into one column containing the amount of time spent in hospital
+4. Collapse of multiple rows connected to one patient into single observation
+    + grouping data by follow.up.time column after ensuring the uniqueness of its values
+    + calculating the mean value for numerical attributes concerning information about blood samples (columns 5-79)
+5. Decision on missing values
+    + NaN values were replaced with ...
+  
+```{r clear_data}
+df_clean <- df_raw %>%
+  rename_with(~tolower(gsub('_', '.', .))) %>%
+  rename_with(~gsub('^x\\.{3}|\\.{1,3}$', '', .)) %>%
+  rename(nt.probnp = amino.terminal.brain.natriuretic.peptide.precursor.nt.probnp) %>%
+  mutate(gender = factor(gender, labels = c('male', 'female')),
+         outcome = factor(outcome, labels = c('survived', 'deceased')),
+         admission.time = difftime(discharge.time, admission.time, units = "auto")) %>%
+  select(-c(re.date, discharge.time)) %>%
+  rename(follow.up.time = admission.time) %>%
+  group_by(follow.up.time) %>%
+  summarise(across(0:4, first), across(5:(ncol(.)-1), mean, na.rm = TRUE)) %>%
+  ungroup()
+```
+
+A sample of cleaned data is presented below.
+
+# Dataset description
+<!-- TODO: general information about dataset origin, references -->
+
+
+## General information
+<!-- dataframe dimentions, cols: name, type, units -->
+
+## Basic statistics
+<!-- TODO: df summary -->
+
+# Individual attributes' value analysis
+
+# Correlation between attributes
+
+# Change of attribute value over time
+
+# Survival prediction
+
+# Attribute importance analysis
+
+# Conclusion
+
