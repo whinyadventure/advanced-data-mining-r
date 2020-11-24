@@ -30,11 +30,14 @@ library(xlsx)
 library(lubridate)
 library(dplyr)
 library(tidyr)
+library(DT)
+library(kableExtra)
 library(ggplot2)
+library(codebook)
 ```
 
 Loading dataset into dataframe without any pre clean-up with caching option checked.
-```{r load_data, cache=TRUE}
+```{r load_data, cache = TRUE}
 path <- '../res/wuhan_blood_sample_data_Jan_Feb_2020.xlsx'
 df_raw <- read.xlsx(path, sheetIndex=1, header=TRUE)
 ```
@@ -48,16 +51,22 @@ Cleaning data consisted of the following steps:
     + shortening too long variable names
 2. Conversion of selected columns' data types
     + setting column 'gender' as factor with 2 levels {1: male, 2: female}
-    + setting column 'outcome' as factor with 2 levels {0: survived, 1: deceased}
+    + setting column 'outcome' as factor with 2 levels {1: survived, 2: deceased}
 3. Elimination of redundant columns
     + removing column 're.date' containing the date of the blood test
-    + transforming 2 columns with admission and discharge dates of the patient into one column containing the amount of time spent in hospital
+    + transforming 2 columns with admission and discharge dates of the patient into a single column containing the amount of time spent in hospital
+    + removing 'x2019.ncov.nucleic.acid.detection' column as it contains only 2 unique values [NA, -1], where -1 is a label for missing values in raw dataset
+    according to the article used as a reference
 4. Collapse of multiple rows connected to one patient into single observation
     + grouping data by follow.up.time column after ensuring the uniqueness of its values
-    + calculating the mean value for numerical attributes concerning information about blood samples (columns 5-79)
+    + calculating the mean value for numerical attributes concerning information about blood samples (columns 5-78) for each group
+    + replacing obtained NaNs with NAs in cases where mean function was used on vectors filled with NAs only
 5. Decision on missing values
-    + NaN values were replaced with ...
-  
+    + removing rows where missing values are more than 30%
+    + converting -1 values in the whole data.frame to NAs (lookup: 3rd bullet point in 3.)
+6. Data arrangement
+    + restoring the original column order from raw dataset
+    + arranging rows by increasing value of 'patient.id' column as in raw dataset
 ```{r clear_data}
 df_clean <- df_raw %>%
   rename_with(~tolower(gsub('_', '.', .))) %>%
@@ -66,24 +75,160 @@ df_clean <- df_raw %>%
   mutate(gender = factor(gender, labels = c('male', 'female')),
          outcome = factor(outcome, labels = c('survived', 'deceased')),
          admission.time = difftime(discharge.time, admission.time, units = "auto")) %>%
-  select(-c(re.date, discharge.time)) %>%
+  select(-c(re.date, discharge.time, x2019.ncov.nucleic.acid.detection)) %>%
   rename(follow.up.time = admission.time) %>%
   group_by(follow.up.time) %>%
   summarise(across(0:4, first), across(5:(ncol(.)-1), mean, na.rm = TRUE)) %>%
-  ungroup()
+  ungroup() %>%
+  replace(is.na(.), NA) %>%
+  filter(rowSums(is.na(.)) <= ncol(.) * 0.3) %>%
+  replace(. == -1, NA) %>%
+  select(2:5, 1, 6:ncol(.)) %>%
+  arrange(patient.id) %>%
+  data.frame()
 ```
 
-A sample of cleaned data is presented below.
-
 # Dataset description
-<!-- TODO: general information about dataset origin, references -->
+
+The dataset is based on the medical records  of 375 patients suffering from COVID-19 collected between 10 January and 18 February 2020 in Tongji Hospital in China. The medical records were gathered by using standard case report forms, which included clinical, epidemiological, demographic, laboratory and mortality outcome information. Data collecting method and some basic statistics are presented in [Tan et al][1] article published in Nature, 14 May 2020.
+
+[1]: https://www.nature.com/articles/s42256-020-0180-7 "article"
 
 
 ## General information
-<!-- dataframe dimentions, cols: name, type, units -->
+
+Cleaned dataset contains 354 rows and 78 columns.
+```{r dims}
+dim(df_clean)
+```
+
+Each row stands for a single patient. The first 5 columns characterize patient's personal data, the remaining 73 columns contain mean values of specific blood test results, which were performed during patient's stay in the hospital.
+
+Detailed description of individual columns can be found in the following codebook.
+```{r codebook, results = 'asis', echo = FALSE}
+label_unit <- list(
+              patient.id = c("patient's identifier number", NA),
+              age = c("patient's age", NA),
+              gender = c("patient's gender", NA),
+              outcome = c("outcome of treatment", NA),
+              follow.up.time = c("time spent in hospital", "hours"),
+              hypersensitive.cardiac.troponini = c("level of cardiac troponin I proteins", "ng/L"),
+              hemoglobin = c("amount of hemoglobin", "g/L"),
+              serum.chloride = c("amount of chloride", "mmol/L"),
+              prothrombin.time = c("time required for blood to clot", "seconds"),
+              procalcitonin = c("level of procalcitonin", "ng/mL"),
+              eosinophils = c("percentage of eosinophils in white blood cells", "%"),
+              interleukin.2.receptor = c("level of interleukin-2 receptor", "pg/mL"),
+              alkaline.phosphatase = c("level of alkaline phosphatase", "U/L"),
+              albumin = c("amount of albumin protein", "g/L"),
+              basophil = c("percentage of basophils in white blood cells", "%"),
+              interleukin.10 = c("level of serum IL-10", "pg/mL"),
+              total.bilirubin = c("total amount of a substance called bilirubin (directed + indirected)", "mmol/L"),
+              platelet.count = c("number of platelets in a volume of blood", "10^9/L"),
+              monocytes = c("percentage of monocytes in white blood cells", "%"),
+              antithrombin = c("activity and the amount of antithrombin", "%"),
+              interleukin.8 = c("level of serum IL-8", "pg/mL"),
+              indirect.bilirubin = c("total bilirubin minus the direct bilirubin levels in the bloodstream", "mmol/L"),
+              red.blood.cell.distribution.width = c("amount of red blood cell variation in volume and size", "%"),
+              neutrophils = c("percentage of neutrophils in white blood cells", "%"),
+              total.protein = c("total amount of albumin and globulin in blood", "g/L"),
+              quantification.of.treponema.pallidum.antibodies = c("presence of Treponema Pallidum antibodies in blood", NA),
+              prothrombin.activity = c(NA, NA),
+              hbsag = c("Hepatitis B surface antigen", "IU/mL"),
+              mean.corpuscular.volume = c("average size of erythrocytes", "fL"),
+              hematocrit = c("volume percentage of red blood cells (RBC) in blood", "%"),
+              white.blood.cell.count = c("number of white blood cells in a volume of blood", "10^9/L"),
+              tumor.necrosis.factorα = c("marker associated with an inflammatory response", "pg/mL"),
+              mean.corpuscular.hemoglobin.concentration = c("average concentration of hemoglobin inside a single red blood cell", "g/L"),
+              fibrinogen = c("level of fibrinogen", "g/L"),
+              interleukin.1β = c("level of interleukin-1-β)", "pg/mL"),
+              urea = c("amount of urea nitrogen found in blood", "mg/dL"),
+              lymphocyte.count = c("number of lymphocytes in a volume of blood", "10^9/L"),
+              ph.value = c("degree of acidity or alkalinity", "0-14"),
+              red.blood.cell.count = c("number of red blood cells in a volume of blood", "	10^12/L"),
+              eosinophil.count = c("number of eosinophils in a volume of blood", "10^9/L"),
+              corrected.calcium = c("an estimate of the total calcium concentration", "mmol/L"),
+              serum.potassium = c("amount of potassium", "mmol/L"),
+              glucose = c("blood glucose level", "mmol/L"),
+              neutrophils.count = c("number of neutrophils in a volume of blood", "10^9/L"),
+              direct.bilirubin = c("amount of conjugated bilirubin in blood", "mmol/L"),
+              mean.platelet.volume = c("average size of platelets", "fL"),
+              ferritin = c("blood ferritin level", "ng/L"),
+              rbc.distribution.width.sd = c("measure of the range of variation of red blood cell (RBC) volume", "fL"),
+              thrombin.time = c("time required for a fibrin clot to form following the addition of thrombin to plasma", "seconds"),
+              lymphocyte = c("percentage of lymphocytes in white blood cells", "%"),
+              hcv.antibody.quantification = c("presence of HCV antibodies in blood", NA),
+              d.d.dimer = c("level of D-Dimer in blood (blood clots detection)", "mg/L"),
+              total.cholesterol = c("amount of cholesterol and triglycerides in blood", "mmol/L"),
+              aspartate.aminotransferase = c("level of aspartate aminotransferase (ALT, AST) enzyme in blood", "U/L"),
+              uric.acid = c("amount of uric acid in blood", "µmol/L"),
+              hco3 = c("amount of bicarbonate (HCO3-) in blood", "mmol/L"),
+              calcium = c("measurement of total calcium concentration", "mmol/L"),
+              nt.probnp = c("level of NT-proB-type Natriuretic Peptide (NT-proBNP) in blood", "ng/L"),
+              lactate.dehydrogenase = c("level of lactate dehydrogenase (LDH) in blood", "U/L"),
+              platelet.large.cell.ratio = c("the proportion of platelets greater than 12 fL (P-LCR)", "%"),
+              interleukin.6 = c("level of interleukin-6 protein in blood", "pg/mL"),
+              fibrin.degradation.products = c("amount of fibrin degradation products (FDPs) in blood", "mg/L"),
+              monocytes.count = c("number of monocytes in a volume of blood", "10^9/L"),
+              plt.distribution.width = c("variation of platelet size distribution (PDW)", "%"),
+              globulin = c("amount of globulin protein", "g/L"),
+              γ.glutamyl.transpeptidase = c("level of Gamma-Glutamyl Transferase (GGT)", "U/L"),
+              international.standard.ratio = c("calculation based on results of a Prothrombin Time test concerning time required for blood clotting", "ratio"),
+              basophil.count = c("number of basophils in a volume of blood", "10^9/L"),
+              mean.corpuscular.hemoglobin = c("average quantity of hemoglobin present in a single red blood cell (MCH)", "pg"),
+              activation.of.partial.thromboplastin.time = c("time required for blood to clot (aPTT)", "seconds"),
+              high.sensitivity.c.reactive.protein = c("more sensitive version of CRP test determining level of C-Reactive Protein in blood", "mg/L"),
+              hiv.antibody.quantification = c("presence of HIV antibodies in blood", NA),
+              serum.sodium = c("amount of sodium", "mmol/L"),
+              thrombocytocrit = c("thrombocyte (platelet) content of blood", NA),
+              esr = c("Erythrocyte Sedimentation Rate test", "mm/hr"),
+              glutamic.pyruvic.transaminase = c("level of Alanine transaminase enzyme in blood", "U/L"),
+              egfr = c("estimated Glomerular Filtration Rate", "mL/min/1.73m^2"),
+              creatinine = c("level of creatinine", "μmol/L"))
+
+codebook <- df_clean
+
+for (x in seq_along(label_unit)) {
+  attr(codebook[, x], "label") <- label_unit[[x]][1]
+  attr(codebook[, x], "units") <- label_unit[[x]][2]
+}
+
+datatable(codebook_table(codebook),
+    options = list(scrollX = TRUE,
+                   autoWidth = TRUE,
+                   paging = TRUE,
+                   pageLength = 10,
+                   lengthMenu = c(5, 10, 15, 20),
+                   columnDefs = list(list(className = 'dt-right', targets = '_all'),
+                                     list(width = '300px', targets = 2))))
+```
 
 ## Basic statistics
-<!-- TODO: df summary -->
+The next table portrays the summary of basic statistics for all columns.
+
+```{r summary, results = 'asis', echo = FALSE}
+summary(df_clean) %>%
+  kbl() %>%
+  kable_styling(bootstrap_options = c("striped", "hover")) %>%
+  kableExtra::scroll_box(width = "100%")
+```
+\
+Decision concerning deleting some of the rows during cleaning phase was supposed to minimize the amount of missing values in the whole dataset and limit number of NAs occurring in a single observation. The final percentage of missing values is approximately 8.3%.
+
+```{r NAs_count}
+(sum(is.na(df_clean)) / (nrow(df_clean) * ncol(df_clean))) * 100
+```
+
+## Sample
+A sample of cleaned data is presented below.
+```{r sample, results = 'asis', echo = FALSE}
+datatable(head(df_clean, 10),
+          options = list(scrollX = TRUE,
+                         autoWidth = TRUE,
+                         paging = TRUE,
+                         columnDefs = list(list(className = 'dt-right', targets = '_all')),
+                         dom = 't'))
+```
 
 # Individual attributes' value analysis
 
