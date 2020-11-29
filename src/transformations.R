@@ -6,10 +6,10 @@ library(tidyr)
 library(arules)
 library(DT)
 library(kableExtra)
+library(plotly)
 library(ggplot2)
+library(corrplot)
 library(codebook)
-
-df_raw <- read.xlsx(path, sheetIndex=1, header=TRUE)
 
 df <- df_raw %>% 
   filter(!is.na(RE_DATE)) %>%
@@ -77,3 +77,5 @@ ids <- df_clean %>%
 
 df_clean <- df_clean %>%
   filter(patient.id %in% ids$patient.id)
+
+rm("ids")

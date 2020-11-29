@@ -32,12 +32,14 @@ library(tidyr)
 library(arules)
 library(DT)
 library(kableExtra)
+library(plotly)
 library(ggplot2)
+library(corrplot)
 library(codebook)
 ```
 
 # Dataset processing
-The dataset is based on the medical records of 375 patients suffering from COVID-19 collected between 10 January and 18 February 2020 in Tongji Hospital in China. The medical records were gathered by using standard case report forms, which included clinical, epidemiological, demographic, laboratory and mortality outcome information. Data collecting method and some basic statistics are presented in [Tan et al][2] article published in Nature, 14 May 2020.
+The dataset is based on the medical records of 375 patients suffering from COVID-19 collected between 10 January and 18 February 2020 in Tongji Hospital in China. The medical records were gathered by using standard case report forms, which included clinical, epidemiological, demographic, laboratory and mortality outcome information. Data collecting methods and some basic statistics are presented in [Tan et al][2] article published in Nature, 14 May 2020.
 \
 \
 This section covers loading source data, initial remarks about its content, cleaning phase and detailed dataset description.
@@ -47,21 +49,21 @@ The dataset can be downloaded under [this][1] link. In this project it's stored 
 \
 \
 Loading source data into a dataframe without any pre clean-up with caching option checked.
-```{r load_data, cache = TRUE}
+```{r load_data, cache=TRUE}
 path <- '../res/wuhan_blood_sample_data_Jan_Feb_2020.xlsx'
 df_raw <- read.xlsx(path, sheetIndex=1, header=TRUE)
 ```
 
 ## Initial remarks and pre-cleanup
-Raw dataset counts 6120 rows and 81 columns. Each row has a timestamp when the blood test result was released, which is stored in RE_DATE column. As we notice, values in this column are not unique and there are some missing values. Looking at the arrangement of the rows we can conclude that the dataset is ordered by increasing value of patient's ID (PATIENT_ID column). What's more, multiple lines are linked to a single patient, but only the first one is properly tagged with patient's id.
-```{r initial_info, results = 'asis', echo = FALSE}
+Raw dataset counts 6120 rows and 81 columns. Each row has a timestamp when the blood test result was released, which is stored in RE_DATE column. As we notice, values in this column are not unique and there are some missing values. Looking at the arrangement of the rows we can conclude that the dataset is ordered by the increasing value of patient ID (PATIENT_ID column). What's more, multiple lines are linked to a single patient, but only the first one is properly tagged with patient ID.
+```{r initial_info, echo=FALSE}
 data.frame(rows = nrow(df_raw), cols = ncol(df_raw), dates = length(unique(df_raw$RE_DATE)), dates_na = sum(is.na(df_raw$RE_DATE)), id_na = sum(is.na(df_raw$PATIENT_ID))) %>%
   kbl(col.names = c('rows', 'columns','unique RE_DATE', 'NAs in RE_DATE', 'NAs in PATIENT_ID')) %>%
   kable_styling() 
 ```
 
 ### Unique keys
-In order go get a distinctive key for each line we will combine RE_DATE with PATIENT_ID values. In first step we will remove rows with NA in RE_DATE, because after further checking we can see that all of blood tests results columns are empty for these lines. Then we will fill the PATIENT_ID column.
+In order to get a distinctive key for each line we will combine RE_DATE with PATIENT_ID values. In the first step we will remove rows with NA in RE_DATE, because after further checking we can see that all of the blood test results columns are empty for these lines. Then we will fill the PATIENT_ID column.
 ```{r get_unique_keys}
 all(sapply(df_raw[is.na(df_raw$RE_DATE), c(8:81)], is.na))
 
@@ -79,8 +81,8 @@ The columns can be divided into 2 categories:
 * information about a patient
 * specific blood test result
 
-Short notes about first 7 columns, containing information about a patient, are shown below.
-```{r personal, echo = FALSE}
+Short notes about the first 7 columns, containing information about a patient, are shown below.
+```{r personal, echo=FALSE}
 str(df[,1:7])
 ```
 As we can see, the gender and outcome of treatment columns are encoded with numbers. Both of these attributes have only 2 unique values, so we will transform them into factors for more clarity. The information about encoding was found in the article mentioned before, which was used as a reference in this analysis.
@@ -91,7 +93,7 @@ df <- df %>%
 ```
 
 The next table presents a summary for the remaining columns, which store results of specific blood tests.
-```{r blood_tests, results = 'asis', echo = FALSE}
+```{r blood_tests, echo=FALSE}
 summary(df[,8:81]) %>%
   kbl() %>%
   kable_styling(bootstrap_options = c("striped", "hover")) %>%
@@ -149,22 +151,22 @@ df <- df %>%
 ```
 
 Obtained names are presented below.
-```{r cleaned_names, echo = FALSE}
+```{r cleaned_names, echo=FALSE}
 colnames(df)
 ```
 
-All of these attributes are of numeric type. In the summary we could observe, that in one column some values are equal to -1. According to the article, this number was selected as a label for missing values. After checking the whole content of that column, we can see that there are only two different values {NA, -1}, which indicates that it's filled only with missing values, thus should be removed from the dataset.
-```{r show_empty_col, echo = FALSE}
+All of these attributes are of numeric type. In the summary we could observe that in one column some values are equal to -1. According to the article, this number was selected as a label for missing values. After checking the whole content of that column, we can see that there are only two different values {NA, -1}, which indicates that it's filled only with missing values, thus should be removed from the dataset.
+```{r show_empty_col, echo=FALSE}
 colnames(df)[apply(df, 2, function(x) any(x == -1, na.rm = TRUE))]
 unique(df[, colnames(df)[apply(df, 2, function(x) any(x == -1, na.rm = TRUE))]])
 ```
 
-```{r delete_empty_col, echo = TRUE}
+```{r delete_empty_col, echo=TRUE}
 df <- df %>% select(-c(colnames(df)[apply(df, 2, function(x) any(x == -1, na.rm = TRUE))]))
 ```
 
 ## Groups detection
-The number of lines per patient is clearly inconstant, which suggests that every patient could had undergone through various combinations of specific blood tests. Also, it's a common knowledge, that one sample of drawn blood is enough to perform multiple tests. We would like to check if some of the blood tests available in our dataset were more likely to be performed together.
+The number of lines per patient is clearly inconstant, which suggests that every patient could have undergone various combinations of specific blood tests. Also, it's common knowledge that one sample of drawn blood is enough to perform multiple tests. We would like to check if some of the blood tests available in our dataset were more likely to be performed together.
 \
 \
 Firstly, let's check how many unique blood tests combinations are present in the dataset.
@@ -173,17 +175,23 @@ trans <- unique(apply(!is.na(df[, 8:80]), 1, which))
 length(trans)
 ```
 
-Now, we will try to find closed frequent itemsets with apriori algorithm. The maximum number of items per itemset is set to approximately 50% of all available blood test types in the dataset. The maximum subset checking time is 30 seconds, support = 0.09 and confidence = 0.8.
+Now we will try to find closed frequent itemsets with apriori algorithm. The maximum number of items per itemset is set to 25. The maximum subset checking time is 60 seconds, support = 0.09 and confidence = 0.8.
 
 ```{r apriori}
-freq_itemsets <- apriori(trans,
-                         parameter = list(support=0.09, confidence=0.8, maxlen=36, maxtime=30, target="closed frequent itemsets"))
+freq_itemsets <- apriori(trans, parameter = list(support=0.09, maxlen=25, maxtime=60, target="closed frequent itemsets"))
 
 max_freq_itemsets <- freq_itemsets[is.maximal(freq_itemsets)]
 itemLabels(max_freq_itemsets) <- colnames(df[, 8:80])
 inspect(sort(max_freq_itemsets, by='support'))
 ```
+The algorithm returned 12 closed frequent itemsets. Analyzing the statistics above, we can draw some conclusions:
 
+1. Itemset 3 contains tests detecting presence of antibodies HIV, HCV, Treponema Pallidum antibodies and HBsAg protein (arises in presence of HBV). The aim of these tests is to determine if the patient is a carrier of any of those pathogens.
+2. Itemsets 4, 11 and 12 differentiate from each other at most with 3 elements, thus their intersection can be treated as a single itemset.
+3. Itemsets 4, 11 and 12 consist mostly of items found in standard Blood Biochemistry tests.
+4. Itemset 7 consists of items found in the standard Complete Blood Count test.
+5. The items in itemset 5 are known as coagulation tests, which measure blood’s ability to clot.
+6. Glucose and procalcitonin levels are often checked together as indicated by itemset 8. Procalcitonin level rises in response to a pro-inflammatory stimulus, especially of bacterial origin. It is therefore often classed as an acute phase reactant.
 
 ## Final cleanup
 For now the percent of NA values in the dataset is too high.
@@ -191,7 +199,7 @@ For now the percent of NA values in the dataset is too high.
 (sum(is.na(df)) / (nrow(df) * ncol(df))) * 100
 ```
 
-To minimize the number of missing values, we will collapse all rows linked to one patient with tests results, which were released on the same day. In case of multiple results of the same test during one day, the latest will be saved.
+To minimize the number of missing values, we will collapse all rows linked to one patient with tests' results, which were released on the same day. In case of multiple results of the same test during one day, the latest will be saved.
 ```{r collapse_rows}
 df_clean <- df %>%
   mutate(re.date = floor_date(re.date, unit = "day")) %>%
@@ -217,13 +225,13 @@ df_clean <- df_clean %>%
 As we can see, the percentage of NA values decreased from approximately 80% to 51%, which is still high, but deleting even more records would significantly reduce the size of the dataset.
 
 # Dataset description
-Final version of dataset contains 1698 rows and 80 columns. Each row represents a set of blood tests results, which were performed for a single patient on a given day.
+Final version of the dataset contains 1698 rows and 80 columns. Each row represents a set of blood tests results, which were performed for a single patient on a given day.
 ```{r dim_clean}
 dim(df_clean)
 ```
 
 Detailed description of individual columns of the dataset with some basic statistics are introduced in the codebook below.
-```{r codebook, results = 'asis', echo = FALSE}
+```{r codebook, echo=FALSE}
 label_unit <- list(
               patient.id = c("patient's identifier number", NA),
               re.date = c("date of blood result release", NA),
@@ -306,7 +314,7 @@ label_unit <- list(
               eGFR = c("estimated Glomerular Filtration Rate", "mL/min/1.73m^2"),
               creatinine = c("level of creatinine", "μmol/L"))
 
-codebook <- data.frame(df_clean)
+codebook <- as(df_clean, "data.frame")
 
 for (x in seq_along(label_unit)) {
   attr(codebook[, x], "label") <- label_unit[[x]][1]
@@ -320,22 +328,201 @@ datatable(codebook_table(codebook),
                    pageLength = 10,
                    lengthMenu = c(5, 10, 15, 20),
                    columnDefs = list(list(className = 'dt-right', targets = '_all'),
-                                     list(width = '300px', targets = 2))))
+                                     list(width = '300px', targets = 2),
+                                     list(width = '150px', targets = c(10:12)))))
 ```
 
 ## Sample
 
 A sample of cleaned data is presented below.
-```{r sample, results = 'asis', echo = FALSE}
-datatable(head(df_clean, 10),
+```{r sample, echo=FALSE}
+sample <- head(df_clean, 10)
+sample <- sample %>%
+  mutate_if(is.POSIXct, as.character)
+
+datatable(sample,
           options = list(scrollX = TRUE,
                          autoWidth = TRUE,
                          paging = TRUE,
                          columnDefs = list(list(className = 'dt-right', targets = '_all'),
-                                           list(width = '150px', targets = c(2,5,6))),
+                                           list(width = '150px', targets = c(2, 5, 6))),
                          dom = 't'))
 ```
 
+# Dataset analysis
+This section is dedicated to attribute values analysis and visualization. It covers not only separate study of each variable but also attempts of finding correlation between them.
+
+## Data over time
+
+The following chart presents how many blood tests of a given type were performed during each day from January 10 to February 18, 2020.
+```{r fig_tests_per_day, fig.width=8, fig.height=6, echo=FALSE, warning=FALSE}
+margins <- list(t = 100, pad = 4)
+
+df_clean %>%
+  group_by(re.date) %>%
+  summarize(across(hs.cTnI:creatinine, ~sum(!is.na(.)))) %>%
+  gather(variable, n, hs.cTnI:creatinine, factor_key = TRUE) %>%
+  plot_ly(x=~re.date, y=~n, type="scatter", color=~variable, mode="markers") %>%
+  layout(title = 'Tests by type per day',
+         hovermode = 'compare',
+         margin = margins,
+         xaxis = list(tickangle = 90,
+                      dtick = 3*86400000),
+         yaxis = list(tick0 = 0, dtick = 10))
+```
+At first glance, we observe a significant rise in the total number of tests after January 27, which suggests that from this day forward more people infected with COVID-19 were admitted to the hospital on a daily basis. Another fact is that before that day the variety of blood test types, which were performed, was visibly lower. Throughout the whole considered period, the most frequently carried out exams were tests included in Complete Blood Count, Blood Biochemistry and glucose level categories.
+
+To confirm the suspicion of a growing number of admitted patients starting on January 27, let's construct a chart visualizing the number of admitted and discharged patients on a given day.
+```{r fig_admissions_discharges, fig.width=8, fig.height=6, echo=FALSE, warning=FALSE}
+df_clean %>%
+  mutate_if(is.POSIXct, ~floor_date(., unit = "day")) %>%
+  group_by(patient.id) %>%
+  summarize(across(admission.time:discharge.time, last)) %>%
+  gather(type, date, admission.time:discharge.time, factor_key = TRUE) %>%
+  group_by(type,date) %>%
+  summarise(n = n()) %>%
+  plot_ly(x=~date, y=~n, type="scatter", color=~type, mode="lines+markers") %>%
+  layout(title = 'Admissions and discharges per day',
+         hovermode = 'compare',
+         margin = margins,
+         xaxis = list(tickangle = 90,
+                      dtick = 3*86400000))
+```
+The number of patients admitted to the hospital on a single day peaked on February 10, whereas the highest number of discharged patients was observed on February 18. 
+
+## Attribute analysis
+This section is broke into 3 parts: analyzing data concerning patient's personal information, blood test results for each type and correlation between them.
+
+### Information about a patient
+
+The following overlaying histograms portray age distribution of COVID-19 survivors and victims.
+```{r fig_age, fig.width=6, fig.height=4, echo=FALSE, warning=FALSE}
+survived<- df_clean %>%
+  group_by(patient.id) %>%
+  summarize(across(c(age, outcome), last)) %>%
+  filter(outcome == 'survived') %>%
+  count(age)
+
+deceased <- df_clean %>%
+  group_by(patient.id) %>%
+  summarize(across(c(age, outcome), last)) %>%
+  filter(outcome == 'deceased') %>%
+  count(age)
+
+plot_ly(alpha = 0.6) %>%
+  add_histogram(x = ~rep(survived$age, survived$n), name = 'survived') %>%
+  add_histogram(x = ~rep(deceased$age, deceased$n), name = 'deceased') %>%
+  layout(barmode = 'overlay',
+         title = 'Age distribution',
+         hovermode = 'compare',
+         margin = margins,
+         xaxis = list(title = 'age bins', range = c(10, 100), tickvals = seq(20, 100, 10)),
+         yaxis = list(title = 'n'))
+```
+The majority of patients, who died for discussed disease, were people aged 65 years or older. Only two young people in age ranges <20 and 30-34 were an exception from this trend. Reported survivors were mainly people under 70 years.
+\
+\
+The next figure shows gender and outcome of treatment distributions.
+```{r fig_gender_outcome, fig.width=6, fig.height=4, echo=FALSE, warning=FALSE}
+fig_sex <- df_clean %>%
+  group_by(patient.id) %>%
+  summarize(gender = last(gender)) %>%
+  count(gender) %>%
+  plot_ly(x = ~gender, y = ~n, color = ~gender, type = 'bar') %>%
+  layout(margin = margins,
+         xaxis = list(title = "gender"))
+
+fig_outcome <- df_clean %>%
+  group_by(patient.id) %>%
+  summarize(outcome = last(outcome)) %>%
+  count(outcome) %>%
+  plot_ly(x = ~outcome, y = ~n, color = ~outcome, colors = "Dark2", type = 'bar') %>%
+  layout(margin = margins,
+         xaxis = list(title = "outcome of treatment"))
+
+subplot(fig_sex, fig_outcome, shareY = T, titleX = T) %>%
+  layout(title = "Age and outcome distribution",
+         showlegend = F)
+```
+In a set of 357 patients, 210 of them were male and 147 were female. The ratio of the deceased patients to the ones, who were cured, equals to approximately 0.84, which even at the time was alarmingly high.
+\
+\
+Let's calculate the total amount of time spent in the hospital by each patient and group these values by the outcome of treatment.
+```{r fig_followup_time, fig.width=6, fig.height=4, echo=FALSE, warning=FALSE}
+df_clean %>%
+  group_by(patient.id) %>%
+  summarize(across(c(admission.time:outcome), last)) %>%
+  mutate(followup.time = difftime(discharge.time, admission.time, units = "days")) %>%
+  select(c(followup.time, outcome)) %>%
+  plot_ly(y = ~followup.time[which(outcome == 'survived')], type = 'box', name = 'survived') %>%
+  add_trace(y = ~followup.time[which(outcome == 'deceased')], type = 'box', name = 'deceased') %>%
+  layout(title = 'Follow-up time by outcome',
+         margin = margins,
+         yaxis = list(title = 'time [days]'))
+```
+The figure shows that the mean number of days of medical follow-up for the deceased patients was less than the corresponding value for the survivors. The conclusion is that people who were reported dead were admitted to the hospital mostly in already severe condition, whereas patients who got the treatment in early onset of disease had better chances of getting cured.
+
+### Blood tests
+Based on the assumption that potential readers of this analysis are not proficient in interpreting blood test results, calculating basic statistics for each column won't be very helpful in understanding what they mean. To avoid this, the data in each column was grouped by the outcome of treatment. Comparing results of these two classes gives us a useful point of view in deciding, which value ranges can be considered abnormal for a specific variable.
+\
+```{r fig_tests, fig.width=10, fig.height=50, echo=FALSE}
+df_clean %>%
+  select(outcome:creatinine) %>%
+  gather(variable, value, hs.cTnI:creatinine, factor_key = TRUE, na.rm = T) %>%
+  ggplot() +
+    facet_wrap(~variable, ncol = 4, scales = "free") +
+    geom_boxplot(mapping=aes(x=outcome, y=value, color=outcome))
+```
+\
+TODO
+
+## Correlation
+In order to check if some of variables with blood test results values are correlated, we calculate Pearson correlation coefficient for columns [8:80] obtaining correlation matrix. Beside the value of the correlation coefficient we will take under consideration significance level as well. To do so, we calculate p-values and store them in another matrix.
+
+The plot below presents a correlogram combined with the significance test sorted by the coefficient value. The diagonal is omitted for better readability.
+```{r corr, fig.width=10, fig.height=10, echo=FALSE}
+M = cor(df_clean[, 8:80], method = "pearson", use = "complete.obs")
+
+cor.mtest <- function(mat, ...) {
+    mat <- as.matrix(mat)
+    n <- ncol(mat)
+    p.mat<- matrix(NA, n, n)
+    diag(p.mat) <- 0
+    for (i in 1:(n - 1)) {
+        for (j in (i + 1):n) {
+            tmp <- cor.test(mat[, i], mat[, j], ...)
+            p.mat[i, j] <- p.mat[j, i] <- tmp$p.value
+        }
+    }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  p.mat
+}
+
+p_mat <- cor.mtest(df_clean[, 8:80], method = "pearson", use = "complete.obs")
+
+corrplot(M, type="upper", order="hclust", p.mat = p_mat, sig.level = 0.05, insig = "blank", tl.col="black", tl.cex = 0.7, diag = F)
+```
+In the above figure, correlations with p-value > 5% are considered as insignificant. In this case the correlation coefficient values are left blank.
+\
+\
+We observe on the correlogram the following facts:
+\
+TODO
+
+# Classifier
+This section describes preprocessing of the dataset and build, training and validation of the model for a classifier.
+
+## Dataset preprocessing
+TODO
+
+## Training
+TODO
+
+## Attribute importance
+TODO
+
+# Conclusion
+TODO
 
 
 
