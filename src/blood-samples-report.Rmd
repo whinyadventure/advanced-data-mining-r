@@ -11,7 +11,7 @@ output:
 ---
 
 # Executive summary
-<!-- TODO  -->
+Since the outbreak of the COVID-19 pandemic at the beginning of 2020, the scientific circles have concentrated on studying the structure and characteristics of SARS-CoV-2 virus in order to invent an effective vaccine in the shortest possible time. However, before accomplishing that task it's crucial to find accurate indicators, which would be helpful in early diagnosis. The aim of the following analysis was to study medical data collected in the early state of pandemic in search of interesting patterns. The first section showed preparation of the environment, which assures the repeatability of the analysis with each run. Next section introduced the original structure of source data, presented basic statistics and walked through the following steps of data processing until obtaining a clean dataset. For better understanding of each variable, the codebook was prepared and can be found in the Data description section. The main part of the analysis begins in the Dataset analysis section. Trends over time indicated that the number of infected patients started growing rapidly around January 27, 2020 and the sooner an infected patient got under medical care, the higher chances of survival he or she had. The majority of people who got to the hospital already in severe condition had died. The elderly and people with preexisting severe health conditions reported to have a higher fatality rate of COVID-19. The blood test results suggested that among available types of blood exams the most reliable biomarkers to detect coronavirus-19 infection were hs-cTnI, NT-proBNP and hs-CRP. Attribute correlation study confirmed that levels of substances tested in standard Blood Biochemistry, Complete Blood Count and Coagulation tests are correlated in each of these categories. The classifier detected that for the presented dataset the crucial tests in outcome of treatment prediction were: LDH level, amounts of neutrophils and lymphocytes, high sensitivity C-reactive protein and albumin protein levels and most of available coagulation tests.
 
 # Environment preparation
 Setting global options and initialization of the seed variable, which is necessary for ensuring reproducibility.
@@ -26,10 +26,11 @@ Loading the libraries used in the project.
 ```{r libs}
 library(knitr)
 library(xlsx)
-library(lubridate)
 library(dplyr)
 library(tidyr)
+library(lubridate)
 library(arules)
+library(caret)
 library(DT)
 library(kableExtra)
 library(plotly)
@@ -40,14 +41,14 @@ library(codebook)
 
 # Dataset processing
 The dataset is based on the medical records of 375 patients suffering from COVID-19 collected between 10 January and 18 February 2020 in Tongji Hospital in China. The medical records were gathered by using standard case report forms, which included clinical, epidemiological, demographic, laboratory and mortality outcome information. Data collecting methods and some basic statistics are presented in [Tan et al][2] article published in Nature, 14 May 2020.
-\
-\
+
+
 This section covers loading source data, initial remarks about its content, cleaning phase and detailed dataset description.
 
 ## Loading source data
 The dataset can be downloaded under [this][1] link. In this project it's stored in a local subdirectory to ensure availability, even when it's deleted from the original source.
-\
-\
+
+
 Loading source data into a dataframe without any pre clean-up with caching option checked.
 ```{r load_data, cache=TRUE}
 path <- '../res/wuhan_blood_sample_data_Jan_Feb_2020.xlsx'
@@ -151,7 +152,7 @@ df <- df %>%
 ```
 
 Obtained names are presented below.
-```{r cleaned_names, echo=FALSE}
+```{r clean_names, echo=FALSE}
 colnames(df)
 ```
 
@@ -314,7 +315,7 @@ label_unit <- list(
               eGFR = c("estimated Glomerular Filtration Rate", "mL/min/1.73m^2"),
               creatinine = c("level of creatinine", "μmol/L"))
 
-codebook <- as(df_clean, "data.frame")
+codebook <- data.frame(df_clean)
 
 for (x in seq_along(label_unit)) {
   attr(codebook[, x], "label") <- label_unit[[x]][1]
@@ -334,7 +335,7 @@ datatable(codebook_table(codebook),
 
 ## Sample
 
-A sample of cleaned data is presented below.
+A sample of clean data is presented below.
 ```{r sample, echo=FALSE}
 sample <- head(df_clean, 10)
 sample <- sample %>%
@@ -419,9 +420,9 @@ plot_ly(alpha = 0.6) %>%
          xaxis = list(title = 'age bins', range = c(10, 100), tickvals = seq(20, 100, 10)),
          yaxis = list(title = 'n'))
 ```
-The majority of patients, who died for discussed disease, were people aged 65 years or older. Only two young people in age ranges <20 and 30-34 were an exception from this trend. Reported survivors were mainly people under 70 years.
-\
-\
+
+The majority of patients, who died for discussed disease, were people aged 65 years or older. Among younger people there were only 2 lethal victims. Beside those 2  outlier cases, people below 40 years were reported to be cured.
+
 The next figure shows gender and outcome of treatment distributions.
 ```{r fig_gender_outcome, fig.width=6, fig.height=4, echo=FALSE, warning=FALSE}
 fig_sex <- df_clean %>%
@@ -444,9 +445,9 @@ subplot(fig_sex, fig_outcome, shareY = T, titleX = T) %>%
   layout(title = "Age and outcome distribution",
          showlegend = F)
 ```
+
 In a set of 357 patients, 210 of them were male and 147 were female. The ratio of the deceased patients to the ones, who were cured, equals to approximately 0.84, which even at the time was alarmingly high.
-\
-\
+
 Let's calculate the total amount of time spent in the hospital by each patient and group these values by the outcome of treatment.
 ```{r fig_followup_time, fig.width=6, fig.height=4, echo=FALSE, warning=FALSE}
 df_clean %>%
@@ -464,7 +465,8 @@ The figure shows that the mean number of days of medical follow-up for the decea
 
 ### Blood tests
 Based on the assumption that potential readers of this analysis are not proficient in interpreting blood test results, calculating basic statistics for each column won't be very helpful in understanding what they mean. To avoid this, the data in each column was grouped by the outcome of treatment. Comparing results of these two classes gives us a useful point of view in deciding, which value ranges can be considered abnormal for a specific variable.
-\
+
+
 ```{r fig_tests, fig.width=10, fig.height=50, echo=FALSE}
 df_clean %>%
   select(outcome:creatinine) %>%
@@ -473,13 +475,42 @@ df_clean %>%
     facet_wrap(~variable, ncol = 4, scales = "free") +
     geom_boxplot(mapping=aes(x=outcome, y=value, color=outcome))
 ```
-\
-TODO
+
+At first glance, we notice graphs with most visible contrasts between 'survived' and 'deceased' classes, which are for lymphocytes, D-Dimer, LDH, FDP and hs-CRP. These items are present in 3 different maximal frequent itemsets, which were detected earlier and classified as Blood Biochemistry, Total Blood Count and coagulation tests. Trying to analyze the plots by these categories, we observe some interesting trends for patients who died.
+
+Blood Biochemistry:
+
+* abnormal levels of some of microelements (serum.chloride, serum.sodium, calcium)
+* multiple outliers with increased levels of total bilirubin and indirect bilirubin
+* decreased albumin level
+* significantly elevated level of urea in bloodstream and its acidity
+* numerous outliers with increased value for AST and GGT, which can indicate liver damage
+* notable increase in LDH level suggesting tissue damage in vital organs,
+* serious rise in hs.CRP values, which detects inflammation during infection and risk of heart disease
+* lower level of eGFR and higher numbers for creatinine suggests possible problems with kidneys
+
+These insights suggest possible damage to vital organs and malfunction of the excretory system caused by COVID-19.
+ 
+Total Blood Count:
+
+* lower level of eosinophils, percentage of basophils and monocytes, count of platelets and lymphocytes
+ 
+Coagulation tests:
+
+* lower level of thrombocytocrit, prothrombin activity and AT
+* significant increase in D-Dimer and FDP level
+* numerous outliers in PT, TT, INR, aPTT
+ 
+Abnormal coagulation results, in particular for patients who had markedly elevated D-D and FDP, seem to go hand in hand with a higher risk of mortality associated with COVID-19. 
+ 
+The abnormally high result values for hs-cTnI and NT-proBNP were other observed indicators for higher disease severity. [This article][3] confirms that statement for serum high-sensitivity cardiac Troponin I, adding that it is true only for patients with no preexisting cardiovascular disease.
+ 
+Similarly, extremely high levels of procalcitonin are positively associated with the severity of COVID-19 according to [this publication][4]. In this case, it can help in distinguishing between severe/critical patients and moderate patients with the disease.
 
 ## Correlation
-In order to check if some of variables with blood test results values are correlated, we calculate Pearson correlation coefficient for columns [8:80] obtaining correlation matrix. Beside the value of the correlation coefficient we will take under consideration significance level as well. To do so, we calculate p-values and store them in another matrix.
+In order to check if some of variables concerning blood test results values are correlated, we calculate Pearson correlation coefficient for columns [8:80], obtaining correlation matrix. Beside the value of the correlation coefficient we will take under consideration significance level as well. To do so, we calculate p-values.
 
-The plot below presents a correlogram combined with the significance test sorted by the coefficient value. The diagonal is omitted for better readability.
+The plot below presents a correlogram combined with the significance test sorted by the coefficient value. Correlations with p-value > 5% are considered as insignificant, thus the correlation coefficient values are left blank in that case. The diagonal is omitted for better readability.
 ```{r corr, fig.width=10, fig.height=10, echo=FALSE}
 M = cor(df_clean[, 8:80], method = "pearson", use = "complete.obs")
 
@@ -502,30 +533,126 @@ p_mat <- cor.mtest(df_clean[, 8:80], method = "pearson", use = "complete.obs")
 
 corrplot(M, type="upper", order="hclust", p.mat = p_mat, sig.level = 0.05, insig = "blank", tl.col="black", tl.cex = 0.7, diag = F)
 ```
-In the above figure, correlations with p-value > 5% are considered as insignificant. In this case the correlation coefficient values are left blank.
-\
-\
-We observe on the correlogram the following facts:
-\
-TODO
+The correlogram reveals a couple of strongly correlated attribute clusters marked with dark blue color expressing value of correlation close to 1. Most of them are groups of tests performed alternatively or on a similar purpose.
+
+D-Dimer and FDP, which were stated as important indicators in the previous section, are strongly correlated. The same goes for the pair of PT and INR and a bigger cluster consisting of 4 elements: LDH, hs.cTnI, NT-proBNT and ferritin.
 
 # Classifier
-This section describes preprocessing of the dataset and build, training and validation of the model for a classifier.
+This section describes the consecutive phases of building a classifier, which predicts whether a patient will be cured or die of COVID-19 based on his or her blood test results. The subsections are focusing on dataset preprocessing, the classifier building and analysis of attribute importance respectively.
 
 ## Dataset preprocessing
-TODO
+Firstly, the dataset has to be transformed to a form where observations represent patients. To do so, we group clean dataset by patient.id and, in case of many records in one column, choose the most recent result. Patient ID, admission and discharge timestamps, as well as date of results release are no longer needed, thus shall be dropped.
 
-## Training
-TODO
+```{r preprocessing_collapse}
+df_ppl <- df_clean %>%
+  group_by(patient.id) %>%
+  fill(everything()) %>%
+  summarise(across(everything(), last)) %>%
+  ungroup() %>%
+  select(-c(patient.id, re.date, admission.time, discharge.time))
+
+(sum(is.na(df_ppl)) / (nrow(df_ppl) * ncol(df_ppl))) * 100
+```
+
+The obtained dataset consists in around 9% of missing values. In attribute analysis we determined potentially useful in survival prediction columns. Let's check how many unique numbers of NAs they contain.
+```{r preprocessing_attr, echo=FALSE}
+cols_all <- c('serum.chloride',    # biochemistry
+          'serum.sodium',
+          'calcium',
+          'total.bilirubin',
+          'indirect.bilirubin',
+          'albumin',
+          'urea',
+          'uric.acid',
+          'AST',
+          'GGT',
+          'LDH',
+          'hs.CRP',
+          'eGFR',
+          'eosinophils.percent',   # CBC
+          'eosinophil.count',
+          'basophil.percent',
+          'monocytes.percent',
+          'platelet.count',
+          'lymphocyte',
+          'lymphocyte.count',
+          'D.Dimer',               # coagulation
+          'FDP',
+          'aPTT',
+          'prothrombin.activity',
+          'INR',
+          'PT',
+          'AT',
+          'fibrinogen',
+          'hs.cTnI',               # other
+          'procalcitonin',
+          'NT.proBNP')
+
+sort(unique(sapply(df_ppl[, cols_all],  function(c) sum(is.na(c)))))
+```
+
+For columns with less than 16 NAs, the patients with those missing values will be deleted. After that, the remaining columns with any NA values will be dropped.
+
+```{r preprocessing_clean}
+na_n <- sapply(df_ppl[, cols_all],  function(c) sum(is.na(c), TRUE))
+cols <- names(na_n)[na_n < 16]
+
+df_ppl <- df_ppl %>%
+  filter(across(cols, ~!is.na(.))) %>%
+  select_if(~ !any(is.na(.)))
+
+dim(df_ppl)
+colnames(df_ppl)
+```
+
+## Building classifier
+In order to build a classifier, we divide previously prepared dataset into training (75%) and testing (25%) sets. The method used for training is repeated k-cross validation with 2 folds and 5 repeats. The model of choice is Random Forest.
+
+```{r classifier_training, warning=FALSE}
+inTraining <- createDataPartition(y = df_ppl$outcome, p = .75, list = FALSE)
+
+training <- df_ppl[inTraining,]
+testing  <- df_ppl[-inTraining,]
+
+rfGrid <- expand.grid(mtry = 10:30)
+gridCtrl <- trainControl(
+    method = "repeatedcv",
+    summaryFunction = twoClassSummary,
+    classProbs = TRUE,
+    number = 2,
+    repeats = 5)
+
+
+fitTune <- train(outcome ~ .,
+             data = training,
+             method = "rf",
+             metric = "ROC",
+             preProc = c("center", "scale"),
+             trControl = gridCtrl,
+             tuneGrid = rfGrid,
+             ntree = 30)
+
+fitTune
+ggplot(fitTune)
+
+rfTuneOutcomes <- predict(fitTune, newdata = testing)
+confusionMatrix(data = rfTuneOutcomes, testing$outcome)
+```
+The accuracy of the obtained classifier equals approximately 98%.
 
 ## Attribute importance
-TODO
+The plot below portrays importance of attributes used in model training.
+```{r importance, fig.height=7, echo=FALSE}
+ggplot(varImp(fitTune, scale=F))
+```
+The first 16 variables are included in the set of columns, which we discussed as crucial in the attribute analysis section. What's surprising, the female gender is quite high in the ranking.
 
 # Conclusion
-TODO
-
+In general, we observe a higher fatality rate of COVID-19 disease in the elderly group and people with preexisted underlying health conditions. People who have been provided with medical care from very onset phases of the disease were more likely to survive. Blood biochemistry and CBC tests proved to be useful in detecting first signs of infection. Based on source data, the most accurate biomarkers in detecting patients with COVID-19 are extremely high levels of hs-cTnI, NT-proBNP and hs-CRP. The high importance of hs-CRP was confirmed by the classifier. The trained model outputted LDH and quantity of various white blood cells as the most crucial biomarkers in detecting presence of coronavirus-19 in the organism.
 
 
 <!-- links -->
 [1]: http://www.cs.put.poznan.pl/dbrzezinski/teaching/zed/wuhan_blood_sample_data_Jan_Feb_2020.xlsx "source data"
 [2]: https://www.nature.com/articles/s42256-020-0180-7 "article"
+[3]: https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7449913/ "hs-cTnI"
+[4]: https://www.sciencedirect.com/science/article/pii/S0924857920302211 "procalcitonin"

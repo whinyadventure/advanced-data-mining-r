@@ -1,15 +1,9 @@
-library(knitr)
 library(xlsx)
-library(lubridate)
 library(dplyr)
 library(tidyr)
-library(arules)
-library(DT)
-library(kableExtra)
-library(plotly)
-library(ggplot2)
-library(corrplot)
-library(codebook)
+library(lubridate)
+
+df_raw <- read.xlsx('../res/wuhan_blood_sample_data_Jan_Feb_2020.xlsx', sheetIndex=1, header=TRUE)
 
 df <- df_raw %>% 
   filter(!is.na(RE_DATE)) %>%
